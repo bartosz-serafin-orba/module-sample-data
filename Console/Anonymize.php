@@ -17,6 +17,7 @@ use Magento\Framework\Exception\FileSystemException;
 use Magento\Framework\Filesystem\DirectoryList;
 use Magento\Framework\Module\Dir;
 use Magento\Framework\Module\Dir\Reader;
+use Magento\Framework\Serialize\Serializer\Json;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Helper\ProgressBar;
 use Symfony\Component\Console\Input\InputInterface;
@@ -61,7 +62,6 @@ class Anonymize extends Command
     protected $db;
 
     protected $group = [];
-
     /**
      * @var Capsule
      */
@@ -71,6 +71,11 @@ class Anonymize extends Command
      * @var array
      */
     protected $fakerInstanceCache;
+
+    /**
+     * @var Json
+     */
+    private $json;
 
     /**
      * @var DirectoryList
@@ -83,6 +88,7 @@ class Anonymize extends Command
      * @param DeploymentConfig $deploymentConfig
      * @param Config $configHelper
      * @param Capsule $capsule
+     * @param Json $json
      * @param DirectoryList $directoryList
      * @param string|null $name
      */
@@ -91,6 +97,7 @@ class Anonymize extends Command
         DeploymentConfig $deploymentConfig,
         ConfigHelper $configHelper,
         Capsule $capsule,
+        Json $json,
         DirectoryList $directoryList,
         string $name = null
     ) {
@@ -99,6 +106,7 @@ class Anonymize extends Command
         $this->deploymentConfig = $deploymentConfig;
         $this->configHelper = $configHelper;
         $this->capsule = $capsule;
+        $this->json = $json;
         $this->directoryList = $directoryList;
     }
 
@@ -212,6 +220,8 @@ class Anonymize extends Command
                                 $updates[$columnName] = $fakerInstance->unique()->{$formatter}(...$options);
                             } elseif (array_get($columnData, 'optional', false)) {
                                 $updates[$columnName] = $fakerInstance->optional()->{$formatter}(...$options);
+                            } elseif ($formatter == 'json') {
+                                $updates[$columnName] = $this->getJsonDataFormatter($columnData, $fakerInstance);
                             } else {
                                 $updates[$columnName] = $fakerInstance->{$formatter}(...$options);
                             }
@@ -359,5 +369,44 @@ class Anonymize extends Command
         }
 
         return (int)ceil($totalRows * $percentage);
+    }
+
+
+    /**
+     * @param $columnData
+     * @param Generator $fakerInstance
+     * @return bool|false|string
+     */
+    private function getJsonDataFormatter($columnData, Generator $fakerInstance)
+    {
+        $dataArray = [];
+        foreach ($columnData['data'] as $key => $dataFormatter) {
+            $jsonFormatter = array_get($dataFormatter, 'formatter.name');
+            $formatterData = array_get($dataFormatter, 'formatter');
+            if (!$jsonFormatter) {
+                $jsonFormatter = $formatterData;
+                $jsonOptions = [];
+            } else {
+                $jsonOptions = array_values(array_slice($formatterData, 1));
+            }
+            if (!$jsonFormatter) {
+                continue;
+            }
+
+            if ($jsonFormatter == 'fixed') {
+                $data = array_first($jsonOptions);
+            } else {
+                if (array_get($dataFormatter, 'optional', false)) {
+                    $data = $fakerInstance->optional()->{$jsonFormatter}(...$jsonOptions);
+                } else {
+                    $data = $fakerInstance->{$jsonFormatter}(...$jsonOptions);
+                }
+            }
+            if ($data) {
+                $dataArray[$key] = $data;
+            }
+        }
+
+        return $this->json->serialize($dataArray);
     }
 }
